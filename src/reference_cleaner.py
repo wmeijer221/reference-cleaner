@@ -85,11 +85,13 @@ def format_title(entry: str) -> str:
         "to",
         "up",
     )
+    subtitle_icons = (':', '-')
     entry = entry.replace("{", "").replace("}", "")
     terms = entry.split(" ")
     new_entry = ""
-    for index, term in enumerate(terms):
-        if term not in uncapitalized_terms or index == 0:
+    is_new_title = True
+    for term in terms:
+        if term not in uncapitalized_terms or is_new_title:
             term = term[0].upper() + term[1:]
         parts = term.split("-")
         new_term = parts[0]
@@ -97,6 +99,7 @@ def format_title(entry: str) -> str:
             part = part[0].lower() + part[1:]
             new_term = f"{new_term}-{part}"
         new_entry = f"{new_entry} {{{new_term}}}"
+        is_new_title = new_term[-1] in subtitle_icons
     new_entry = f"{{{new_entry[1:]}}}"
     return new_entry
 
