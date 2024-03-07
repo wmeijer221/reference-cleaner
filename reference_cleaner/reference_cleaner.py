@@ -1,11 +1,13 @@
-import io
-from typing import Iterator, Dict, List
 from enum import Enum
-import logging
+import io
 import json
+import logging
+from typing import Dict, Iterator, List
 
 from wmeijer_utils.file import OpenMany
 from wmeijer_utils.collections.safe_dict import SafeDict
+from wmeijer_utils.file import iterate_through_files_in_nested_folders
+
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
@@ -16,11 +18,15 @@ _ARTICLE_TYPE_KEY = "__article_type"
 
 
 def clean_references(
-    bibtex_files: Iterator[str],
-    latex_files: Iterator[str],
+    project_dir: str,
     whitelist: str,
     output_file: str,
 ):
+    # Identifies all latex and bibtex files.
+    files = list(iterate_through_files_in_nested_folders(project_dir, max_depth=10000))
+    bibtex_files = [file for file in files if file.endswith(".bib")]
+    latex_files = [file for file in files if file.endswith(".tex")]
+
     # Load bibtex files.
     # Index all bibtex entries.
     bibtex_entries = load_bibtex_entries(bibtex_files)
@@ -32,7 +38,7 @@ def clean_references(
     bibtex_references = find_bibtex_references_in_files(latex_files, reference_keys)
 
     # Extract relevant information from bibtex entries and trace what data is removed.
-    bibtex_extract = extract_bibtex_data(bibtex_references, bibtex_entries)
+    bibtex_extract = {key: bibtex_entries[key] for key in bibtex_references}
 
     # Print some meta data you can easily build a whitelist with.
     _count_fields(bibtex_extract)
@@ -65,9 +71,10 @@ def _safe_strip_comma(entry: str) -> str:
     return entry
 
 
-def format_title(entry: str) -> str:
-    # Every major word is capitalized.
-    uncapitalized_terms = (
+def format_title(title: str) -> str:
+    """Formats the title to adhere with ICSE rules."""
+    # Constants.
+    UNCAPITALIZED_TERMS = (
         "a",
         "an",
         "and",
@@ -85,26 +92,41 @@ def format_title(entry: str) -> str:
         "to",
         "up",
     )
-    subtitle_icons = (':', '-')
-    entry = entry.replace("{", "").replace("}", "")
-    terms = entry.split(" ")
-    new_entry = ""
+    SUBTITLE_ICONS = (":", "-")
+
+    # Function state.
+    formatted_title = ""
     is_new_title = True
+
+    # Cleans input.
+    title = title.replace("{", "").replace("}", "")
+
+    # Updates each of the terms in the title.
+    terms = title.split(" ")
     for term in terms:
-        if term not in uncapitalized_terms or is_new_title:
+        # Every term that is not ignored, or the start of a (sub)title, is capitalized.
+        if term not in UNCAPITALIZED_TERMS or is_new_title:
             term = term[0].upper() + term[1:]
+
+        # In terms containing a hypen, only the first character is capitalized.
         parts = term.split("-")
         new_term = parts[0]
         for part in parts[1:]:
             part = part[0].lower() + part[1:]
             new_term = f"{new_term}-{part}"
-        new_entry = f"{new_entry} {{{new_term}}}"
-        is_new_title = new_term[-1] in subtitle_icons
-    new_entry = f"{{{new_entry[1:]}}}"
-    return new_entry
+
+        # Title is updated.
+        formatted_title = f"{formatted_title} {{{new_term}}}"
+
+        # Check if a subtitle has started.
+        is_new_title = new_term[-1] in SUBTITLE_ICONS
+    formatted_title = f"{{{formatted_title[1:]}}}"
+
+    return formatted_title
 
 
 def _load_bibtex_entry(bibtex_file: io.IOBase) -> Dict[str, Dict[str, str]]:
+    """Loads bibtex entries from a bibtex file."""
     logger.info(f'Extracting bibtex entries from "{bibtex_file.name}".')
     entries = dict()
 
@@ -156,18 +178,20 @@ def _load_bibtex_entry(bibtex_file: io.IOBase) -> Dict[str, Dict[str, str]]:
 def find_bibtex_references_in_files(
     latex_files: Iterator[str], bibtex_entry_keys: List[str]
 ) -> Iterator[str]:
+    """Filters out bibtex entries that are not referenced in the provided latex files."""
     references = set()
     with OpenMany(latex_files, "r", encoding="utf-8") as latex_files:
         for file in latex_files:
-            file_references = _find_bibtex_references_in_file(file, bibtex_entry_keys)
+            file_references = find_bibtex_references_in_file(file, bibtex_entry_keys)
             references = references.union(file_references)
     logger.info(f"Extracted {len(references)} references.")
     return references
 
 
-def _find_bibtex_references_in_file(
+def find_bibtex_references_in_file(
     latex_file: io.IOBase, bibtex_entry_keys: List[str]
 ) -> Iterator[str]:
+    """Finds all bibtex references in a latex file."""
     logger.info(f'Extracting references from "{latex_file.name}".')
     references = set()
     for line in latex_file:
@@ -175,21 +199,6 @@ def _find_bibtex_references_in_file(
             if key in line:
                 references.add(key)
     return references
-
-
-def extract_bibtex_data(
-    bibtex_references: Iterator[str], bibtex_entries: Dict[str, Dict[str, str]]
-) -> Dict[str, Dict[str, str]]:
-    extract = dict()
-    for key in bibtex_references:
-        entry = bibtex_entries[key]
-        entry_extract = _extract_bibtex_data(entry)
-        extract[key] = entry_extract
-    return extract
-
-
-def _extract_bibtex_data(entry: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, str]]:
-    return entry
 
 
 def apply_whitelist(bibtex_entries: Dict[str, Dict[str, str]], whitelist_file: str):
