@@ -1,8 +1,9 @@
 from enum import Enum
 import io
+import os
 import json
 import logging
-from typing import Dict, Iterator, List
+from typing import Dict, Iterator, List, Iterable
 
 from wmeijer_utils.file import OpenMany
 from wmeijer_utils.collections.safe_dict import SafeDict
@@ -41,7 +42,9 @@ def clean_references(
     bibtex_extract = {key: bibtex_entries[key] for key in bibtex_references}
 
     # Print some meta data you can easily build a whitelist with.
-    _count_fields(bibtex_extract)
+    field_counts = _count_fields(bibtex_extract)
+
+    _safe_create_field_whitelist(whitelist, field_counts.keys())
 
     # Filters data with whitelist.
     bibtex_extract = apply_whitelist(bibtex_extract, whitelist)
@@ -108,10 +111,12 @@ def format_title(title: str) -> str:
         if term not in UNCAPITALIZED_TERMS or is_new_title:
             term = term[0].upper() + term[1:]
 
-        # In terms containing a hypen, only the first character is capitalized.
+        # In terms containing a hyphen, only the first character is capitalized.
         parts = term.split("-")
         new_term = parts[0]
         for part in parts[1:]:
+            if len(part) == 0:
+                continue
             part = part[0].lower() + part[1:]
             new_term = f"{new_term}-{part}"
 
@@ -119,7 +124,7 @@ def format_title(title: str) -> str:
         formatted_title = f"{formatted_title} {{{new_term}}}"
 
         # Check if a subtitle has started.
-        is_new_title = new_term[-1] in SUBTITLE_ICONS
+        is_new_title = len(new_term) > 0 and new_term[-1] in SUBTITLE_ICONS
     formatted_title = f"{{{formatted_title[1:]}}}"
 
     return formatted_title
@@ -248,10 +253,18 @@ def _build_bibtex_entry_from(key: str, entry: Dict[str, str]) -> str:
     return output
 
 
-def _count_fields(bibtex_entries: Dict[str, Dict[str, str]]):
+def _safe_create_field_whitelist(whitelist: str, keys: Iterable[str]):
+    if os.path.exists(whitelist):
+        return
+    with open(whitelist, "w+", encoding="utf-8") as whitelist_file:
+        whitelist_file.writelines(f"{key}\n" for key in keys)
+
+
+def _count_fields(bibtex_entries: Dict[str, Dict[str, str]]) -> Dict[str, int]:
     field_count = SafeDict(0)
     for entry in bibtex_entries.values():
         for key in entry.keys():
             field_count[key] += 1
     del field_count[_ARTICLE_TYPE_KEY]
     logger.info(f"Bibtex field entries:\n{json.dumps(field_count, indent=2)}")
+    return field_count
